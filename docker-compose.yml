@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  memgraph:
+    image: memgraph/memgraph-platform:latest
+    container_name: memgraph-rag
+    ports:
+      - "7687:7687"   # Bolt port
+      - "7444:7444"   # HTTP port
+      - "3000:3000"   # Memgraph Lab (UI)
+    environment:
+      - MEMGRAPH_DIE_ON_ERROR=true
+    volumes:
+      - ./memgraph_data:/var/lib/memgraph

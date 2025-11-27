@@ -1,0 +1,4 @@
+google-generativeai
+chonkie
+neo4j
+python-dotenv
