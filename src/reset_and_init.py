@@ -21,7 +21,7 @@ def reset_db():
         # Удаляем данные
         session.run("MATCH (n) DETACH DELETE n")
         
-        # Удаляем индекс (без IF EXISTS, так как ваша версия его не поддерживает)
+        # Удаляем индекс (без IF EXISTS, так как наша версия его не поддерживает)
         try:
             session.run("DROP VECTOR INDEX chunk_vector_index")
             print("🗑️ Старый индекс удален.")
@@ -30,7 +30,7 @@ def reset_db():
 
         print("🔧 Создание векторного индекса...")
         try:
-            # Добавили 'capacity': 10000 - это помогает выделить память заранее
+            # Добавил 'capacity': 10000 - это помогает выделить память заранее
             session.run("""
             CREATE VECTOR INDEX chunk_vector_index ON :Chunk(embedding) 
             WITH CONFIG {"dimension": 768, "metric": "cos", "capacity": 10000}
@@ -44,7 +44,7 @@ def reset_db():
             
         except Exception as e:
             print(f"❌ Ошибка создания индекса: {e}")
-            print("💡 Если это 'Unknown exception', обязательно выполните 'docker-compose restart memgraph'")
+            print("💡 Если это 'Unknown exception', обязательно выполни 'docker-compose restart memgraph'")
 
     driver.close()
 

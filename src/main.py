@@ -6,17 +6,18 @@ import time
 import re
 import glob
 import sys
-# ДОБАВЛЕНО: Импорт типов
 from typing import List, Dict, Any
 
-# Ловим ошибки импорта библиотек
+# Ловим ошибки импорта
 try:
     from dotenv import load_dotenv
     load_dotenv()
     import google.generativeai as genai
     from chonkie import TokenChunker
     from neo4j import GraphDatabase
-    print("✅ [2/6] Библиотеки загружены")
+    # --- НОВОЕ: Импорт Docling для PDF ---
+    from docling.document_converter import DocumentConverter
+    print("✅ [2/6] Библиотеки загружены (включая Docling)")
 except ImportError as e:
     print(f"❌ Ошибка импорта: {e}")
     sys.exit(1)
@@ -31,6 +32,23 @@ if "GEMINI_API_KEY" not in os.environ:
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
+# Системный промпт
+SYSTEM_PROMPT = """
+You are an expert Knowledge Graph Engineer.
+Extract entities and relationships from the text.
+
+STRICT JSON OUTPUT FORMAT (NO MARKDOWN, NO COMMENTS):
+{
+  "entities": [
+    {"id": "Entity Name", "type": "Category"}
+  ],
+  "relations": [
+    {"source": "Entity Name", "target": "Entity Name", "type": "RELATION_TYPE"}
+  ]
+}
+Normalize IDs. Use SCREAMING_SNAKE_CASE for relation types.
+"""
+
 class HybridGraphPipeline:
     def __init__(self, uri, auth, extraction_model="gemini-2.5-flash"):
         print(f"🔌 [3/6] Подключение к Memgraph ({uri})...")
@@ -43,9 +61,12 @@ class HybridGraphPipeline:
             sys.exit(1)
             
         self.chunker = TokenChunker(tokenizer="gpt2", chunk_size=512, chunk_overlap=50)
+        # Инициализация конвертера PDF
+        self.pdf_converter = DocumentConverter()
+        
         self.extraction_model = genai.GenerativeModel(
             model_name=extraction_model,
-            system_instruction="Extract entities (Person, Org, Tech) and relationships (SCREAMING_SNAKE_CASE). JSON output: {entities: [], relations: []}.",
+            system_instruction=SYSTEM_PROMPT,
             generation_config={"temperature": 0.1, "response_mime_type": "application/json"}
         )
         self.embedding_model_name = "models/text-embedding-004" 
@@ -67,9 +88,29 @@ class HybridGraphPipeline:
     def _extract_graph_data(self, text: str) -> Dict[str, Any]:
         try:
             resp = self.extraction_model.generate_content(f"Extract graph from:\\n\\n{text}")
-            return json.loads(resp.text)
+            raw = resp.text
+            if "```" in raw:
+                raw = re.sub(r"```json|```", "", raw).strip()
+            return json.loads(raw)
         except:
             return {"entities": [], "relations": []}
+
+    def _read_file_content(self, filepath: str) -> str:
+        """Читает файл в зависимости от расширения."""
+        ext = os.path.splitext(filepath)[1].lower()
+        
+        if ext == ".pdf":
+            try:
+                # Docling конвертирует PDF в Markdown
+                result = self.pdf_converter.convert(filepath)
+                return result.document.export_to_markdown()
+            except Exception as e:
+                print(f"      ❌ Ошибка Docling: {e}")
+                return ""
+        else:
+            # Обычный текст
+            with open(filepath, "r", encoding="utf-8") as f:
+                return f.read().replace('\\0', '')
 
     def process_directory(self, data_dir: str):
         abs_path = os.path.abspath(data_dir)
@@ -79,34 +120,33 @@ class HybridGraphPipeline:
             print(f"❌ Папка '{data_dir}' не существует!")
             return
 
+        # Добавили поиск .pdf
         files = glob.glob(os.path.join(data_dir, "**/*.txt"), recursive=True) + \
-                glob.glob(os.path.join(data_dir, "**/*.md"), recursive=True)
+                glob.glob(os.path.join(data_dir, "**/*.md"), recursive=True) + \
+                glob.glob(os.path.join(data_dir, "**/*.pdf"), recursive=True)
         
         print(f"📄 Найдено файлов: {len(files)}")
-        if len(files) == 0:
-            print("⚠️ Папка пуста или файлы не имеют расширения .txt/.md")
-            return
+        if not files: return
         
         print("▶️ [5/6] Начало обработки...")
         with self.driver.session() as session:
             for filepath in files:
                 filename = os.path.basename(filepath)
-                # Нормализация ID
                 doc_id = re.sub(r'[^a-zA-Z0-9_-]', '_', filename)
                 print(f"   🔪 Читаю файл: {filename}")
                 
                 try:
-                    with open(filepath, "r", encoding="utf-8") as f: 
-                        text = f.read().replace('\\0', '')
+                    # Универсальное чтение
+                    text = self._read_file_content(filepath)
                     
                     if not text.strip():
-                        print("   ⚠️ Файл пуст, пропускаю.")
+                        print("   ⚠️ Файл пуст или не прочитан.")
                         continue
 
                     chunks = self.chunker(text)
                     print(f"      🧩 Чанков: {len(chunks)}")
 
-                    # 1. Документ (JSON DUMPS)
+                    # 1. Документ
                     session.run(f"MERGE (d:Document {{id: {json.dumps(doc_id)}}})")
 
                     for i, chunk in enumerate(chunks):
@@ -114,7 +154,7 @@ class HybridGraphPipeline:
                         vector = self._generate_embedding(chunk.text)
                         chunk_id = str(uuid.uuid4())
 
-                        # 2. Чанк (JSON DUMPS)
+                        # 2. Чанк
                         query_chunk = f"""
                         MATCH (d:Document {{id: {json.dumps(doc_id)}}})
                         MERGE (c:Chunk {{id: {json.dumps(chunk_id)}}})
@@ -127,11 +167,10 @@ class HybridGraphPipeline:
 
                         # 3. Сущности
                         for ent in graph_data.get("entities", []):
-                            e_id = ent.get("id", "").strip()
-                            e_type = ent.get("type", "Thing").strip()
+                            e_id = ent.get("id") or ent.get("name")
                             if not e_id: continue
-                            
-                            e_type = re.sub(r'[^a-zA-Z0-9_]', '', e_type) or "Thing"
+                            e_id = e_id.strip()
+                            e_type = re.sub(r'[^a-zA-Z0-9_]', '', ent.get("type", "Thing").strip()) or "Thing"
                             
                             q_ent = f"""
                             MATCH (c:Chunk {{id: {json.dumps(chunk_id)}}}) 
@@ -147,8 +186,7 @@ class HybridGraphPipeline:
                             tgt = rel.get("target", "").strip()
                             if not src or not tgt: continue
                             
-                            r_type = re.sub(r'[^a-zA-Z0-9_]', '', rel.get("type", "RELATED").replace(" ", "_").upper()) 
-                            if not r_type: r_type = "RELATED"
+                            r_type = re.sub(r'[^a-zA-Z0-9_]', '', rel.get("type", "RELATED").replace(" ", "_").upper()) or "RELATED"
                             
                             q_rel = f"""
                             MATCH (a:Entity {{id: {json.dumps(src)}}}), (b:Entity {{id: {json.dumps(tgt)}}}) 
@@ -156,20 +194,17 @@ class HybridGraphPipeline:
                             """
                             session.run(q_rel)
                     
-                    print(f"      ✅ Файл {filename} загружен в граф.")
+                    print(f"      ✅ Файл {filename} загружен.")
                             
                 except Exception as e:
-                    print(f"      ❌ Ошибка обработки файла: {e}")
+                    print(f"      ❌ Ошибка: {e}")
 
 if __name__ == "__main__":
-    if not os.path.exists("data"):
-        os.makedirs("data")
-        print("⚠️ Папка data не найдена, создана пустая.")
-    
+    if not os.path.exists("data"): os.makedirs("data")
     try:
         pipeline = HybridGraphPipeline(MEMGRAPH_URI, MEMGRAPH_AUTH)
         pipeline.process_directory("data")
         pipeline.close()
-        print("🎉 [6/6] Все задачи выполнены.")
+        print("🎉 [6/6] Готово.")
     except Exception as e:
-        print(f"\n❌ Критический сбой: {e}")
+        print(f"\n❌ Сбой: {e}")

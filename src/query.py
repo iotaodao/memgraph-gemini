@@ -50,7 +50,7 @@ def search(question):
     driver = GraphDatabase.driver(MEMGRAPH_URI, auth=MEMGRAPH_AUTH)
     
     with driver.session() as session:
-        # Вектор конвертируем в строку JSON
+        # Вектор конвертирую в строку JSON
         vec_str = json.dumps(vector)
         
         # Запрос с OPTIONAL MATCH для защиты от отсутствующих связей
@@ -111,4 +111,4 @@ def search(question):
     driver.close()
 
 if __name__ == "__main__":
-    search("What is Memgraph?")
+    search("What is the main topic of the finice document?")

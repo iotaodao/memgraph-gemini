@@ -1,14 +1,9 @@
-# Python environment
 venv/
 __pycache__/
 *.pyc
-
-# Environment variables (SECRETS)
 .env
-
-# IDE settings
-.vscode/
-.idea/
-
-# OS specific
 .DS_Store
+memgraph_data/
+memgraph_logs/
+data/
+!data/.gitkeep
