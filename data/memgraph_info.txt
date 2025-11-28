@@ -1,0 +1,5 @@
+Memgraph is a high-performance graph database compatible with Neo4j. 
+It is engineered to run in-memory, which provides extremely low latency for real-time applications.
+Memgraph supports the Cypher query language and integrates seamlessly with AI tools like LangChain and LlamaIndex.
+One of its key features is native support for vector search (using cosine similarity), allowing developers to build Hybrid RAG systems.
+Memgraph is implemented in C++ and is often used for fraud detection, recommendation engines, and network analysis.
