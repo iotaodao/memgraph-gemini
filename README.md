@@ -28,7 +28,7 @@ sudo apt-get install -y libgl1 libglib2.0-0 tesseract-ocr
 ### 2. Клонирование и Python
 ```bash
 git clone <ваша-ссылка-на-репозиторий>
-cd memgraph-gemini-rag
+cd memgraph-gemini
 
 python3 -m venv venv
 source venv/bin/activate
